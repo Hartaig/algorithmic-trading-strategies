@@ -1,2 +1,2 @@
-# trading-strategy-next-day-close-prediction
+# algorithmic-trading-strategies
 A package for algorithmic trading utilizing coinbase API to place orders
