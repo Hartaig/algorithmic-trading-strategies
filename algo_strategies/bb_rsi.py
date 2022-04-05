@@ -17,14 +17,26 @@ class BBRSI:
         else:
             self.url = 'https://api.pro.coinbase.com'
 
+    def _get_historical_data(self, ticker, time_interval, start_dt, end_dt):
+        # initialize coinbase pro
+        c = cbpro.PublicClient(api_url=self.url)
+        # get historical data
+        historical = None
+        while historical is None:
+            try:
+                historical = None
+                historical = pd.DataFrame(c.get_product_historic_rates(product_id=ticker, granularity=time_interval,
+                                                                       start=start_dt, end=end_dt))
+            except Exception as e:
+                print(f'Error obtaining historical: {e}, local time: {str(datetime.datetime.now())}')
+        return historical
+
     def get_price(self, ticker, time_interval, start_dt, end_dt):
-        # intialize coinbase pro
-        c = cbpro.PublicClient(api_url='https://api.pro.coinbase.com')
         # get historical data
         # start_dt and end_dt are None if we want real time data
-        if (start_dt == None) & (end_dt == None):
-            historical = pd.DataFrame(c.get_product_historic_rates(product_id=ticker, granularity=time_interval,
-                                                                   start=start_dt, end=end_dt))
+        if (start_dt is None) & (end_dt is None):
+            historical = self._get_historical_data(ticker=ticker, time_interval=time_interval, start_dt=start_dt,
+                                                   end_dt=end_dt)
         # if start and end are defined
         else:
             # get expected number of rows (300 row limit per API call)
@@ -32,12 +44,11 @@ class BBRSI:
                                                                          utc=True)).total_seconds() // time_interval) + 1
             # if expected number of rows is <= 300 then multiple calls in chunk are not necessary
             if n_rows <= 300:
-                historical = pd.DataFrame(c.get_product_historic_rates(product_id=ticker, granularity=time_interval,
-                                                                       start=start_dt.isoformat(),
-                                                                       end=end_dt.isoformat()))
-            # if expected number of rows is > 300 then multiple calls in chunnks are necessayr
+                historical = self._get_historical_data(ticker=ticker, time_interval=time_interval,
+                                                       start_dt=start_dt.isoformat(), end_dt=end_dt.isoformat())
+            # if expected number of rows is > 300 then multiple calls in chunks are necessary
             else:
-                # get date cutoffs for each 300 timestep chunk
+                # get date cutoffs for each 300 timestamp chunk
                 chunk = 1
                 dates = [start_dt]
                 if time_interval == 3600:
@@ -52,9 +63,8 @@ class BBRSI:
                 historical = pd.DataFrame()
                 # call and concatenate data chunks
                 for i in range(len(dates) - 1):
-                    hist = pd.DataFrame(c.get_product_historic_rates(product_id=ticker, granularity=time_interval,
-                                                                     start=dates[i].isoformat(),
-                                                                     end=dates[i + 1].isoformat()))
+                    hist = self._get_historical_data(ticker=ticker, time_interval=time_interval,
+                                                     start_dt=dates[i].isoformat(), end_dt=dates[i + 1].isoformat())
                     historical = pd.concat([historical, hist], axis=0)
         historical.columns = ["date", "open", "high", "low", "close", "volume"]
         historical['date'] = pd.to_datetime(historical['date'], unit='s')
@@ -107,7 +117,7 @@ class BBRSI:
             interval = test[1]
             bb_lwr_stdv = test[2]
             bb_upr_stdv = test[4]
-            #bbrsi = BBRSI(tickers=ticker, interval=interval, start_dt=start_dt, end_dt=end_dt, sandbox=False)
+            # bbrsi = BBRSI(tickers=ticker, interval=interval, start_dt=start_dt, end_dt=end_dt, sandbox=False)
             status = None
             while status is None:
                 try:
