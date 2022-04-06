@@ -95,29 +95,151 @@ class BBRSI:
         df = pd.concat([df_price, df_bb, df_rsi], axis=1)
         return df
 
-    def backtest(self, tickers, intervals, buy_signal, sell_signal, buy_size, buying_power,
-                 start_dt=datetime.datetime(2020, 1, 1), end_dt=datetime.datetime(2022, 3, 30)):
-        final_results = pd.DataFrame()
+    def _get_avg_num_trades(self, backtest_data_cln):
+        month_ct = backtest_data_cln[['month', 'pos', 'neg']].groupby('month').sum().reset_index()
+        year_ct = backtest_data_cln[['year', 'pos', 'neg']].groupby('year').sum().reset_index()
+        avg_num_pos_m = np.mean(month_ct['pos'])
+        avg_num_neg_m = np.mean(month_ct['neg'])
+        avg_num_pos_y = np.mean(year_ct['pos'])
+        avg_num_neg_y = np.mean(year_ct['neg'])
+        tot_num_pos = np.sum(backtest_data_cln['pos'])
+        tot_num_neg = np.sum(backtest_data_cln['neg'])
+        return [avg_num_pos_m, avg_num_neg_m, avg_num_pos_y, avg_num_neg_y, tot_num_pos, tot_num_neg]
 
+    def _get_backtest_results(self, backtest_data, ticker, interval, bb_lwr_stdv, b_rsi, bb_upr_stdv, s_rsi, start_dt,
+                              end_dt):
+        # backtest_data might be empty if no trades were finished (buy and sell)
+        if len(backtest_data) == 0:
+            parameters = f"interval:{interval}, buy_bb_lwr:{bb_lwr_stdv}, buy_rsi:{b_rsi}, sell_bb_upr:{bb_upr_stdv}, sell_rsi:{s_rsi}"
+            results = pd.DataFrame(
+                [[ticker, parameters, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+                columns=['ticker', 'parameters', 'tot_num_pos', 'tot_num_neg', 'avg_num_pos_m', 'avg_num_neg_m',
+                         'avg_num_pos_y', 'avg_num_neg_y', 'r_per_t', 'r_per_t_std', 'sharp_r', 'r_per_pos_t',
+                         'r_per_neg_t', 'r_per_neg_t_std', 'sort_r', 'r_per_m', 'r_2020', 'r_2021', 'ytd',
+                         'num_trades_2020', 'num_trades_2021', 'num_trades_ytd'])
+        else:
+            # create columns
+            backtest_data['month'] = backtest_data['date'].dt.to_period('M')
+            backtest_data['year'] = backtest_data['date'].dt.to_period('Y')
+            backtest_data['pos'] = np.where(backtest_data['return'] > 0, 1, 0)
+            backtest_data['neg'] = np.where(backtest_data['return'] < 0, 1, 0)
+
+            # avg number positive/negative trades per month/year
+            avg_num_trades_list = self._get_avg_num_trades(self, backtest_data_cln=backtest_data)
+            #month_ct = backtest_data[['month', 'pos', 'neg']].groupby('month').sum().reset_index()
+            #year_ct = backtest_data[['year', 'pos', 'neg']].groupby('year').sum().reset_index()
+            #avg_num_pos_m = np.mean(month_ct['pos'])
+            #avg_num_neg_m = np.mean(month_ct['neg'])
+            #avg_num_pos_y = np.mean(year_ct['pos'])
+            #avg_num_neg_y = np.mean(year_ct['neg'])
+            #tot_num_pos = np.sum(backtest_data['pos'])
+            #tot_num_neg = np.sum(backtest_data['neg'])
+
+            # avg return per trade
+            r_per_t = np.mean(backtest_data['return'])
+            r_per_pos_t = np.mean(backtest_data[backtest_data['pos'] == 1]['return'])
+            r_per_neg_t = np.mean(backtest_data[backtest_data['neg'] == 1]['return'])
+
+            # standard deviation of return per trade
+            r_per_t_std = np.std(backtest_data['return'])
+            r_per_neg_t_std = np.std(backtest_data[backtest_data['neg'] == 1]['return'])
+
+            # sharp ratio return per trade
+            if r_per_t_std == 0:
+                sharp_r = float('inf')
+            else:
+                sharp_r = r_per_t / r_per_t_std
+
+            # sortino ratio return per trade
+            if r_per_neg_t_std == 0:
+                sort_r = float('inf')
+            else:
+                sort_r = r_per_t / r_per_neg_t_std
+
+            # avg monthly return
+            performance = backtest_data.groupby('month').agg(
+                {'return': 'mean', 'profit': 'sum', 'balance': 'first', 'date': 'count'}).reset_index()
+            performance.columns = ['month', 'average_return_per_trade', 'total_profit',
+                                   'total_account_balance_begin_of_month', 'number_of_completed_trades']
+            performance['months_return'] = (
+                    performance['total_profit'] / performance['total_account_balance_begin_of_month'])
+            r_per_m = np.mean(performance['months_return'])
+
+            # avg return per year
+            performance = backtest_data.groupby('year').agg(
+                {'return': 'mean', 'profit': 'sum', 'balance': 'first', 'date': 'count'}).reset_index()
+            performance.columns = ['year', 'average_return_per_trade', 'total_profit',
+                                   'total_account_balance_begin_of_year', 'number_of_completed_trades']
+            performance['years_return'] = (
+                    performance['total_profit'] / performance['total_account_balance_begin_of_year'])
+            if pd.Period('2020') not in performance['year'].tolist():
+                r_2020, num_trade_2020 = 0, 0
+            else:
+                r_2020, num_trade_2020 = float(performance[performance['year'] == '2020']['years_return']), float(
+                    performance[performance['year'] == '2020']['number_of_completed_trades'])
+
+            if pd.Period('2021') not in performance['year'].tolist():
+                r_2021, num_trade_2021 = 0, 0
+            else:
+                r_2021, num_trade_2021 = float(performance[performance['year'] == '2021']['years_return']), float(
+                    performance[performance['year'] == '2021']['number_of_completed_trades'])
+
+            if pd.Period('2022') not in performance['year'].tolist():
+                r_ytd, num_trade_ytd = 0, 0
+            else:
+                r_ytd, num_trade_ytd = float(performance[performance['year'] == '2022']['years_return']), float(
+                    performance[performance['year'] == '2022']['number_of_completed_trades'])
+
+            r_per_y = [r_2020, r_2021, r_ytd]
+            num_trades_y = [num_trade_2020, num_trade_2021, num_trade_ytd]
+
+            # final output
+            parameters = f"interval:{interval}, buy_bb_lwr:{bb_lwr_stdv}, buy_rsi:{b_rsi}, sell_bb_upr:{bb_upr_stdv}, sell_rsi:{s_rsi}"
+            results = pd.DataFrame(
+                [[ticker, parameters, tot_num_pos, tot_num_neg, avg_num_pos_m, avg_num_neg_m, avg_num_pos_y,
+                  avg_num_neg_y, r_per_t, r_per_t_std, sharp_r, r_per_pos_t, r_per_neg_t, r_per_neg_t_std, sort_r,
+                  r_per_m, r_per_y[0], r_per_y[1], r_per_y[2], num_trades_y[0], num_trades_y[1], num_trades_y[2]]],
+                columns=['ticker', 'parameters', 'tot_num_pos', 'tot_num_neg', 'avg_num_pos_m', 'avg_num_neg_m',
+                         'avg_num_pos_y', 'avg_num_neg_y', 'r_per_t', 'r_per_t_std', 'sharp_r', 'r_per_pos_t',
+                         'r_per_neg_t', 'r_per_neg_t_std', 'sort_r', 'r_per_m', 'r_2020', 'r_2021', 'ytd',
+                         'num_trades_2020', 'num_trades_2021',
+                         'num_trades_ytd'])
+        return results
+
+    def backtest(self, tickers, intervals, buy_signal, sell_signal, buy_size, buying_power, start_dt, end_dt, fees):
+
+        # start_dt=datetime.datetime(2020, 1, 1)
+        # end_dt=datetime.datetime(2022, 3, 30)
+        # buy_size = 100 # amount in dollars to buy
+        # buying_power = 1000 # total initial account balance
         # tickers = ['BTC-USD', 'ETH-USD', 'ADA-USD', 'SOL-USD', 'DOGE-USD']
         # intervals = [3600, 86400]  # {60, 300, 900, 3600, 21600, 86400} - one minute, five minutes, fifteen minutes, one hour, six hours, and one day, respectively
         # buy_signal = {'bb_lwr': [2, 3, 4], 'rsi': [10, 15, 20, 30, 0]}
         # sell_signal = {'bb_upr': [2, 3, 4, 0], 'rsi': [50, 60, 70, 75, 80, 0]}
+
+        # get every combination of hyper-parameters
         tests = list(product(tickers, intervals, buy_signal['bb_lwr'], buy_signal['rsi'], sell_signal['bb_upr'],
                              sell_signal['rsi']))
 
-        for test in tqdm(tests):
-            # buy_size = 100  # amount in dollars to buy
-            # buying_power = 1000  # total initial account balance
-            balance = buying_power  # account balance at the end of the backetest - will be same as initial balance at the start
+        # initialize dataframe
+        final_results = pd.DataFrame()
 
+        # run through each test
+        for test in tqdm(tests):
+            # account balance at the end of the backtest - will be same as initial balance at the start
+            balance = buying_power
+
+            # initialize lists to keep record during backtest
             shares, price, timestamp, profits, acc_balance, trade_principle, returns = [], [], [], [], [], [], []
 
+            # get parameters for test
             ticker = test[0]
             interval = test[1]
             bb_lwr_stdv = test[2]
             bb_upr_stdv = test[4]
             # bbrsi = BBRSI(tickers=ticker, interval=interval, start_dt=start_dt, end_dt=end_dt, sandbox=False)
+
+            # get data based on parameters
             status = None
             while status is None:
                 try:
@@ -127,29 +249,31 @@ class BBRSI:
                 except Exception as e:
                     status = None
                     print(f'Error obtaining data: {e}')
+
+            # drop rows with NA (this happens because bands are not computed until the 20th time step)
             df_final = df_final.dropna()
             df_final.reset_index(drop=True, inplace=True)
 
+            # check for buy and sell signals
             for i in range(len(df_final)):
                 # buy
                 b_rsi = test[3]
                 if (df_final['low'][i] <= df_final['bb_lower'][i]) & (df_final['rsi'][i] >= b_rsi) & (
                         buying_power > buy_size):
                     # fee (0.6% to buy)
-                    fee = buy_size * 0.006
+                    fee = buy_size * fees
                     # number of shares bought
                     num_s_b = (buy_size - fee) / df_final['bb_lower'][i]
                     # buying price
                     price_b = df_final['bb_lower'][i]
-                    # timestamp of purchase
-                    ts_b = df_final['date'][i]
-                    # keep record
+                    # reduce buying power
                     buying_power = buying_power - buy_size
+                    # keep record
                     shares.append(num_s_b)
                     price.append(price_b)
                     trade_principle.append(buy_size)
                     avg_price = np.sum(np.array(shares) * np.array(price)) / np.sum(shares)
-                    # print(f"B: {num_s_b} for {price_b} @ {ts_b}")
+                    # print(f"B: {num_s_b} for {price_b} @ {df_final['date'][i]}")
 
                 # sell
                 s_rsi = test[5]
@@ -161,11 +285,10 @@ class BBRSI:
                     # timestamp of sale
                     ts_s = df_final['date'][i]
                     # fee (0.6% to sell)
-                    fee = num_s_s * price_s * (0.006)
+                    fee = num_s_s * price_s * fees
                     # keep record
                     profit = ((price_s - avg_price) * np.sum(shares)) - fee
                     balance = balance + profit
-                    buying_power = buying_power + (np.sum(trade_principle))
                     perc_return = (profit / np.sum(trade_principle))
                     # print(f"S: {num_s_s} for {price_s} @ {ts_s}, profit: {profit}, return: {perc_return}, balance: {balance}")
                     profits.append(profit)
@@ -173,6 +296,7 @@ class BBRSI:
                     timestamp.append(ts_s)
                     acc_balance.append(balance)
                     # reset
+                    buying_power = buying_power + (np.sum(trade_principle))
                     shares = []
                     price = []
                     trade_principle = []
@@ -180,102 +304,12 @@ class BBRSI:
             # get results
             backtest_data = pd.DataFrame(
                 {'date': timestamp, 'return': returns, 'profit': profits, 'balance': acc_balance})
-
-            if len(backtest_data) == 0:
-                parameters = f"interval:{interval}, buy_bb_lwr:{bb_lwr_stdv}, buy_rsi:{b_rsi}, sell_bb_upr:{bb_upr_stdv}, sell_rsi:{s_rsi}"
-                results = pd.DataFrame(
-                    [[ticker, parameters, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
-                    columns=['ticker', 'parameters', 'tot_num_pos', 'tot_num_neg', 'avg_num_pos_m', 'avg_num_neg_m',
-                             'avg_num_pos_y', 'avg_num_neg_y', 'r_per_t', 'r_per_t_std', 'sharp_r', 'r_per_pos_t',
-                             'r_per_neg_t', 'r_per_neg_t_std', 'sort_r', 'r_per_m', 'r_2020', 'r_2021', 'ytd',
-                             'num_trades_2020', 'num_trades_2021', 'num_trades_ytd'])
-            else:
-                backtest_data['month'] = backtest_data['date'].dt.to_period('M')
-                backtest_data['year'] = backtest_data['date'].dt.to_period('Y')
-                backtest_data['pos'] = np.where(backtest_data['return'] > 0, 1, 0)
-                backtest_data['neg'] = np.where(backtest_data['return'] < 0, 1, 0)
-
-                # avg number positive/negative trades per month/year
-                month_ct = backtest_data[['month', 'pos', 'neg']].groupby('month').sum().reset_index()
-                year_ct = backtest_data[['year', 'pos', 'neg']].groupby('year').sum().reset_index()
-                avg_num_pos_m = np.mean(month_ct['pos'])
-                avg_num_neg_m = np.mean(month_ct['neg'])
-                avg_num_pos_y = np.mean(year_ct['pos'])
-                avg_num_neg_y = np.mean(year_ct['neg'])
-                tot_num_pos = np.sum(backtest_data['pos'])
-                tot_num_neg = np.sum(backtest_data['neg'])
-
-                # avg return per trade
-                r_per_t = np.mean(backtest_data['return'])
-                r_per_pos_t = np.mean(backtest_data[backtest_data['pos'] == 1]['return'])
-                r_per_neg_t = np.mean(backtest_data[backtest_data['neg'] == 1]['return'])
-
-                # standard deviation of return per trade
-                r_per_t_std = np.std(backtest_data['return'])
-                r_per_neg_t_std = np.std(backtest_data[backtest_data['neg'] == 1]['return'])
-
-                # sharp ratio return per trade
-                if r_per_t_std == 0:
-                    sharp_r = float('inf')
-                else:
-                    sharp_r = r_per_t / r_per_t_std
-
-                # sortino ratio return per trade
-                if r_per_neg_t_std == 0:
-                    sort_r = float('inf')
-                else:
-                    sort_r = r_per_t / r_per_neg_t_std
-
-                # avg monthly return
-                performance = backtest_data.groupby('month').agg(
-                    {'return': 'mean', 'profit': 'sum', 'balance': 'first', 'date': 'count'}).reset_index()
-                performance.columns = ['month', 'average_return_per_trade', 'total_profit',
-                                       'total_account_balance_begin_of_month', 'number_of_completed_trades']
-                performance['months_return'] = (
-                        performance['total_profit'] / performance['total_account_balance_begin_of_month'])
-                r_per_m = np.mean(performance['months_return'])
-
-                # avg return per year
-                performance = backtest_data.groupby('year').agg(
-                    {'return': 'mean', 'profit': 'sum', 'balance': 'first', 'date': 'count'}).reset_index()
-                performance.columns = ['year', 'average_return_per_trade', 'total_profit',
-                                       'total_account_balance_begin_of_year', 'number_of_completed_trades']
-                performance['years_return'] = (
-                        performance['total_profit'] / performance['total_account_balance_begin_of_year'])
-                if pd.Period('2020') not in performance['year'].tolist():
-                    r_2020, num_trade_2020 = 0, 0
-                else:
-                    r_2020, num_trade_2020 = float(performance[performance['year'] == '2020']['years_return']), float(
-                        performance[performance['year'] == '2020']['number_of_completed_trades'])
-
-                if pd.Period('2021') not in performance['year'].tolist():
-                    r_2021, num_trade_2021 = 0, 0
-                else:
-                    r_2021, num_trade_2021 = float(performance[performance['year'] == '2021']['years_return']), float(
-                        performance[performance['year'] == '2021']['number_of_completed_trades'])
-
-                if pd.Period('2022') not in performance['year'].tolist():
-                    r_ytd, num_trade_ytd = 0, 0
-                else:
-                    r_ytd, num_trade_ytd = float(performance[performance['year'] == '2022']['years_return']), float(
-                        performance[performance['year'] == '2022']['number_of_completed_trades'])
-
-                r_per_y = [r_2020, r_2021, r_ytd]
-                num_trades_y = [num_trade_2020, num_trade_2021, num_trade_ytd]
-
-                # final output
-                parameters = f"interval:{interval}, buy_bb_lwr:{bb_lwr_stdv}, buy_rsi:{b_rsi}, sell_bb_upr:{bb_upr_stdv}, sell_rsi:{s_rsi}"
-                results = pd.DataFrame(
-                    [[ticker, parameters, tot_num_pos, tot_num_neg, avg_num_pos_m, avg_num_neg_m, avg_num_pos_y,
-                      avg_num_neg_y, r_per_t, r_per_t_std, sharp_r, r_per_pos_t, r_per_neg_t, r_per_neg_t_std, sort_r,
-                      r_per_m, r_per_y[0], r_per_y[1], r_per_y[2], num_trades_y[0], num_trades_y[1], num_trades_y[2]]],
-                    columns=['ticker', 'parameters', 'tot_num_pos', 'tot_num_neg', 'avg_num_pos_m', 'avg_num_neg_m',
-                             'avg_num_pos_y', 'avg_num_neg_y', 'r_per_t', 'r_per_t_std', 'sharp_r', 'r_per_pos_t',
-                             'r_per_neg_t', 'r_per_neg_t_std', 'sort_r', 'r_per_m', 'r_2020', 'r_2021', 'ytd',
-                             'num_trades_2020', 'num_trades_2021',
-                             'num_trades_ytd'])
+            results = self._get_backtest_results(self, backtest_data=backtest_data, ticker=ticker, interval=interval,
+                                                 bb_lwr_stdv=bb_lwr_stdv, b_rsi=b_rsi, bb_upr_stdv=bb_upr_stdv,
+                                                 s_rsi=s_rsi)
             final_results = pd.concat([final_results, results], axis=0)
 
+        # compute final results of backtest
         final_results['tot_num_trades'] = final_results['tot_num_pos'] + final_results['tot_num_neg']
         final_results['prop_pos_trades'] = final_results['tot_num_pos'] / final_results['tot_num_trades']
         final_results['prop_neg_trades'] = final_results['tot_num_neg'] / final_results['tot_num_trades']
