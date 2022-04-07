@@ -106,6 +106,41 @@ class BBRSI:
         tot_num_neg = np.sum(backtest_data_cln['neg'])
         return [avg_num_pos_m, avg_num_neg_m, avg_num_pos_y, avg_num_neg_y, tot_num_pos, tot_num_neg]
 
+    def _get_avg_return_per_trade(self, backtest_data_cln):
+        r_per_t = np.mean(backtest_data_cln['return'])
+        r_per_pos_t = np.mean(backtest_data_cln[backtest_data_cln['pos'] == 1]['return'])
+        r_per_neg_t = np.mean(backtest_data_cln[backtest_data_cln['neg'] == 1]['return'])
+        return [r_per_t, r_per_pos_t, r_per_neg_t]
+
+    def _get_avg_return_per_month(self, backtest_data_cln):
+        performance = backtest_data_cln.groupby('month').agg(
+            {'return': 'mean', 'profit': 'sum', 'balance': 'first', 'date': 'count'}).reset_index()
+        performance.columns = ['month', 'average_return_per_trade', 'total_profit',
+                               'total_account_balance_begin_of_month', 'number_of_completed_trades']
+        performance['months_return'] = (
+                performance['total_profit'] / performance['total_account_balance_begin_of_month'])
+        r_per_m = np.mean(performance['months_return'])
+        return r_per_m
+
+    def _get_std_return_trade(self, backtest_data_cln):
+        r_per_t_std = np.std(backtest_data_cln['return'])
+        r_per_neg_t_std = np.std(backtest_data_cln[backtest_data_cln['neg'] == 1]['return'])
+        return [r_per_t_std, r_per_neg_t_std]
+
+    def _get_sharp_ratio(self, r_per_t, r_per_t_std):
+        if r_per_t_std == 0:
+            sharp_r = float('inf')
+        else:
+            sharp_r = r_per_t / r_per_t_std
+        return sharp_r
+
+    def _get_sortino_ratio(self, r_per_t, r_per_neg_t_std):
+        if r_per_neg_t_std == 0:
+            sort_r = float('inf')
+        else:
+            sort_r = r_per_t / r_per_neg_t_std
+        return sort_r
+
     def _get_backtest_results(self, backtest_data, ticker, interval, bb_lwr_stdv, b_rsi, bb_upr_stdv, s_rsi, start_dt,
                               end_dt):
         # backtest_data might be empty if no trades were finished (buy and sell)
@@ -126,44 +161,21 @@ class BBRSI:
 
             # avg number positive/negative trades per month/year
             avg_num_trades_list = self._get_avg_num_trades(self, backtest_data_cln=backtest_data)
-            #month_ct = backtest_data[['month', 'pos', 'neg']].groupby('month').sum().reset_index()
-            #year_ct = backtest_data[['year', 'pos', 'neg']].groupby('year').sum().reset_index()
-            #avg_num_pos_m = np.mean(month_ct['pos'])
-            #avg_num_neg_m = np.mean(month_ct['neg'])
-            #avg_num_pos_y = np.mean(year_ct['pos'])
-            #avg_num_neg_y = np.mean(year_ct['neg'])
-            #tot_num_pos = np.sum(backtest_data['pos'])
-            #tot_num_neg = np.sum(backtest_data['neg'])
 
             # avg return per trade
-            r_per_t = np.mean(backtest_data['return'])
-            r_per_pos_t = np.mean(backtest_data[backtest_data['pos'] == 1]['return'])
-            r_per_neg_t = np.mean(backtest_data[backtest_data['neg'] == 1]['return'])
+            r_per_t_list = self._get_avg_return_per_trade(self, backtest_data_cln=backtest_data)
 
             # standard deviation of return per trade
-            r_per_t_std = np.std(backtest_data['return'])
-            r_per_neg_t_std = np.std(backtest_data[backtest_data['neg'] == 1]['return'])
+            return_std_list = self._get_std_return_trade(self, backtest_data_cln=backtest_data)
 
             # sharp ratio return per trade
-            if r_per_t_std == 0:
-                sharp_r = float('inf')
-            else:
-                sharp_r = r_per_t / r_per_t_std
+            sharp_r = self._get_sharp_ratio(self, r_per_t=r_per_t_list[0], r_per_t_std=return_std_list[0])
 
             # sortino ratio return per trade
-            if r_per_neg_t_std == 0:
-                sort_r = float('inf')
-            else:
-                sort_r = r_per_t / r_per_neg_t_std
+            sort_r = self._get_sortino_ratio(self, r_per_t=r_per_t_list[0], r_per_neg_t_std=return_std_list[1])
 
             # avg monthly return
-            performance = backtest_data.groupby('month').agg(
-                {'return': 'mean', 'profit': 'sum', 'balance': 'first', 'date': 'count'}).reset_index()
-            performance.columns = ['month', 'average_return_per_trade', 'total_profit',
-                                   'total_account_balance_begin_of_month', 'number_of_completed_trades']
-            performance['months_return'] = (
-                    performance['total_profit'] / performance['total_account_balance_begin_of_month'])
-            r_per_m = np.mean(performance['months_return'])
+            r_per_m = self._get_avg_return_per_month(self, backtest_data_cln=backtest_data)
 
             # avg return per year
             performance = backtest_data.groupby('year').agg(
@@ -196,8 +208,10 @@ class BBRSI:
             # final output
             parameters = f"interval:{interval}, buy_bb_lwr:{bb_lwr_stdv}, buy_rsi:{b_rsi}, sell_bb_upr:{bb_upr_stdv}, sell_rsi:{s_rsi}"
             results = pd.DataFrame(
-                [[ticker, parameters, tot_num_pos, tot_num_neg, avg_num_pos_m, avg_num_neg_m, avg_num_pos_y,
-                  avg_num_neg_y, r_per_t, r_per_t_std, sharp_r, r_per_pos_t, r_per_neg_t, r_per_neg_t_std, sort_r,
+                [[ticker, parameters, avg_num_trades_list[0], avg_num_trades_list[1], avg_num_trades_list[2],
+                  avg_num_trades_list[3], avg_num_trades_list[4], avg_num_trades_list[5], r_per_t_list[0],
+                  return_std_list[0], sharp_r,
+                  r_per_t_list[1], r_per_t_list[2], return_std_list[1], sort_r,
                   r_per_m, r_per_y[0], r_per_y[1], r_per_y[2], num_trades_y[0], num_trades_y[1], num_trades_y[2]]],
                 columns=['ticker', 'parameters', 'tot_num_pos', 'tot_num_neg', 'avg_num_pos_m', 'avg_num_neg_m',
                          'avg_num_pos_y', 'avg_num_neg_y', 'r_per_t', 'r_per_t_std', 'sharp_r', 'r_per_pos_t',
