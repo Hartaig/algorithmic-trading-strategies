@@ -104,7 +104,7 @@ class BBRSI:
         avg_num_neg_y = np.mean(year_ct['neg'])
         tot_num_pos = np.sum(backtest_data_cln['pos'])
         tot_num_neg = np.sum(backtest_data_cln['neg'])
-        return [avg_num_pos_m, avg_num_neg_m, avg_num_pos_y, avg_num_neg_y, tot_num_pos, tot_num_neg]
+        return [tot_num_pos, tot_num_neg, avg_num_pos_m, avg_num_neg_m, avg_num_pos_y, avg_num_neg_y]
 
     def _get_avg_return_per_trade(self, backtest_data_cln):
         r_per_t = np.mean(backtest_data_cln['return'])
@@ -139,8 +139,8 @@ class BBRSI:
                 r_per_y.append(0)
                 num_trades_y.append(0)
             else:
-                r_per_y.append(float(performance[performance['year'] == '2020']['years_return']))
-                num_trades_y.append(float(performance[performance['year'] == '2020']['number_of_completed_trades']))
+                r_per_y.append(float(performance[performance['year'] == str(i)]['years_return']))
+                num_trades_y.append(float(performance[performance['year'] == str(i)]['number_of_completed_trades']))
 
         final_dict = {'r_per_y': r_per_y, 'num_trades_y': num_trades_y, 'years': years}
         return final_dict
@@ -169,12 +169,13 @@ class BBRSI:
         # backtest_data might be empty if no trades were finished (buy and sell)
         if len(backtest_data) == 0:
             parameters = f"interval:{interval}, buy_bb_lwr:{bb_lwr_stdv}, buy_rsi:{b_rsi}, sell_bb_upr:{bb_upr_stdv}, sell_rsi:{s_rsi}"
+            years = [str(i) for i in range(start_dt.year, end_dt.year + 1)]
+            cols = ['ticker', 'parameters', 'tot_num_pos', 'tot_num_neg', 'avg_num_pos_m', 'avg_num_neg_m',
+                    'avg_num_pos_y', 'avg_num_neg_y', 'r_per_t', 'r_per_t_std', 'sharp_r', 'r_per_pos_t',
+                    'r_per_neg_t', 'r_per_neg_t_std', 'sort_r', 'r_per_m'] + ['return_' + x for x in years] +\
+                   ['num_t_' + x for x in years]
             results = pd.DataFrame(
-                [[ticker, parameters, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
-                columns=['ticker', 'parameters', 'tot_num_pos', 'tot_num_neg', 'avg_num_pos_m', 'avg_num_neg_m',
-                         'avg_num_pos_y', 'avg_num_neg_y', 'r_per_t', 'r_per_t_std', 'sharp_r', 'r_per_pos_t',
-                         'r_per_neg_t', 'r_per_neg_t_std', 'sort_r', 'r_per_m', 'r_2020', 'r_2021', 'ytd',
-                         'num_trades_2020', 'num_trades_2021', 'num_trades_ytd'])
+                [[ticker, parameters] + [0] * len(cols)], columns=cols)
         else:
             # create columns
             backtest_data['month'] = backtest_data['date'].dt.to_period('M')
@@ -183,25 +184,25 @@ class BBRSI:
             backtest_data['neg'] = np.where(backtest_data['return'] < 0, 1, 0)
 
             # avg number positive/negative trades per month/year
-            avg_num_trades_list = self._get_avg_num_trades(self, backtest_data_cln=backtest_data)
+            avg_num_trades_list = self._get_avg_num_trades(backtest_data_cln=backtest_data)
 
             # avg return per trade
-            r_per_t_list = self._get_avg_return_per_trade(self, backtest_data_cln=backtest_data)
+            r_per_t_list = self._get_avg_return_per_trade(backtest_data_cln=backtest_data)
 
             # standard deviation of return per trade
-            return_std_list = self._get_std_return_trade(self, backtest_data_cln=backtest_data)
+            return_std_list = self._get_std_return_trade(backtest_data_cln=backtest_data)
 
             # sharp ratio return per trade
-            sharp_r = self._get_sharp_ratio(self, r_per_t=r_per_t_list[0], r_per_t_std=return_std_list[0])
+            sharp_r = self._get_sharp_ratio(r_per_t=r_per_t_list[0], r_per_t_std=return_std_list[0])
 
             # sortino ratio return per trade
-            sort_r = self._get_sortino_ratio(self, r_per_t=r_per_t_list[0], r_per_neg_t_std=return_std_list[1])
+            sort_r = self._get_sortino_ratio(r_per_t=r_per_t_list[0], r_per_neg_t_std=return_std_list[1])
 
             # avg monthly return
-            r_per_m = self._get_avg_return_per_month(self, backtest_data_cln=backtest_data)
+            r_per_m = self._get_avg_return_per_month(backtest_data_cln=backtest_data)
 
             # avg return per year
-            year_list = self._get_avg_return_per_year(self, backtest_data_cln=backtest_data, start_dt=start_dt,
+            year_dict = self._get_avg_return_per_year(backtest_data_cln=backtest_data, start_dt=start_dt,
                                                       end_dt=end_dt)
 
             # final output
@@ -210,10 +211,11 @@ class BBRSI:
                 [[ticker, parameters, avg_num_trades_list[0], avg_num_trades_list[1], avg_num_trades_list[2],
                   avg_num_trades_list[3], avg_num_trades_list[4], avg_num_trades_list[5], r_per_t_list[0],
                   return_std_list[0], sharp_r, r_per_t_list[1], r_per_t_list[2], return_std_list[1], sort_r,
-                  r_per_m] + year_list['r_per_y'] + year_list['num_trades_y']],
+                  r_per_m] + year_dict['r_per_y'] + year_dict['num_trades_y']],
                 columns=['ticker', 'parameters', 'tot_num_pos', 'tot_num_neg', 'avg_num_pos_m', 'avg_num_neg_m',
                          'avg_num_pos_y', 'avg_num_neg_y', 'r_per_t', 'r_per_t_std', 'sharp_r', 'r_per_pos_t',
-                         'r_per_neg_t', 'r_per_neg_t_std', 'sort_r', 'r_per_m'] + year_list['years'])
+                         'r_per_neg_t', 'r_per_neg_t_std', 'sort_r', 'r_per_m'] +
+                        ['return_' + x for x in year_dict['years']] + ['num_t_' + x for x in year_dict['years']])
         return results
 
     def backtest(self, tickers, intervals, buy_signal, sell_signal, buy_size, buying_power, start_dt, end_dt, fees):
@@ -223,7 +225,8 @@ class BBRSI:
         # buy_size = 100 # amount in dollars to buy
         # buying_power = 1000 # total initial account balance
         # tickers = ['BTC-USD', 'ETH-USD', 'ADA-USD', 'SOL-USD', 'DOGE-USD']
-        # intervals = [3600, 86400]  # {60, 300, 900, 3600, 21600, 86400} - one minute, five minutes, fifteen minutes, one hour, six hours, and one day, respectively
+        # intervals = [3600, 86400]  # {60, 300, 900, 3600, 21600, 86400} - one minute, five minutes, fifteen minutes,
+        # one hour, six hours, and one day, respectively
         # buy_signal = {'bb_lwr': [2, 3, 4], 'rsi': [10, 15, 20, 30, 0]}
         # sell_signal = {'bb_upr': [2, 3, 4, 0], 'rsi': [50, 60, 70, 75, 80, 0]}
 
@@ -314,9 +317,9 @@ class BBRSI:
             # get results
             backtest_data = pd.DataFrame(
                 {'date': timestamp, 'return': returns, 'profit': profits, 'balance': acc_balance})
-            results = self._get_backtest_results(self, backtest_data=backtest_data, ticker=ticker, interval=interval,
+            results = self._get_backtest_results(backtest_data=backtest_data, ticker=ticker, interval=interval,
                                                  bb_lwr_stdv=bb_lwr_stdv, b_rsi=b_rsi, bb_upr_stdv=bb_upr_stdv,
-                                                 s_rsi=s_rsi)
+                                                 s_rsi=s_rsi, start_dt=start_dt, end_dt=end_dt)
             final_results = pd.concat([final_results, results], axis=0)
 
         # compute final results of backtest
