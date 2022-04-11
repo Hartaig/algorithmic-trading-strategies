@@ -175,7 +175,7 @@ class BBRSI:
                     'r_per_neg_t', 'r_per_neg_t_std', 'sort_r', 'r_per_m'] + ['return_' + x for x in years] +\
                    ['num_t_' + x for x in years]
             results = pd.DataFrame(
-                [[ticker, parameters] + [0] * len(cols)], columns=cols)
+                [[ticker, parameters] + [0] * (len(cols) - 2)], columns=cols)
         else:
             # create columns
             backtest_data['month'] = backtest_data['date'].dt.to_period('M')
