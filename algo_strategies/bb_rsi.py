@@ -272,7 +272,7 @@ class BBRSI:
                 # buy
                 b_rsi = test[3]
                 if (df_final['low'][i] <= df_final['bb_lower'][i]) & (df_final['rsi'][i] >= b_rsi) & (
-                        buying_power > buy_size):
+                        buying_power >= buy_size):
                     # fee (0.6% to buy)
                     fee = buy_size * fees
                     # number of shares bought
