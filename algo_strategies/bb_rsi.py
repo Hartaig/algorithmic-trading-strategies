@@ -271,8 +271,8 @@ class BBRSI:
             for i in range(len(df_final)):
                 # buy
                 b_rsi = test[3]
-                if (df_final['low'][i] <= df_final['bb_lower'][i]) & (df_final['rsi'][i] >= b_rsi) & (
-                        buying_power >= buy_size):
+                if ((df_final['low'][i] <= df_final['bb_lower'][i]) | (df_final['close'][i] <= df_final['bb_lower'][i]))\
+                        & (df_final['rsi'][i] <= b_rsi) & (buying_power >= buy_size):
                     # fee (0.6% to buy)
                     fee = buy_size * fees
                     # number of shares bought
@@ -290,7 +290,8 @@ class BBRSI:
 
                 # sell
                 s_rsi = test[5]
-                if (df_final['high'][i] >= df_final['bb_upper'][i]) & (df_final['rsi'][i] >= s_rsi) & (len(shares) > 0):
+                if ((df_final['high'][i] >= df_final['bb_upper'][i]) | (df_final['close'][i] >= df_final['bb_upper'][i]))\
+                        & (df_final['rsi'][i] >= s_rsi) & (len(shares) > 0):
                     # number of shares sold
                     num_s_s = np.sum(shares)
                     # selling price
@@ -317,6 +318,8 @@ class BBRSI:
             # get results
             backtest_data = pd.DataFrame(
                 {'date': timestamp, 'return': returns, 'profit': profits, 'balance': acc_balance})
+            #return df_final
+            print(backtest_data)
             results = self._get_backtest_results(backtest_data=backtest_data, ticker=ticker, interval=interval,
                                                  bb_lwr_stdv=bb_lwr_stdv, b_rsi=b_rsi, bb_upr_stdv=bb_upr_stdv,
                                                  s_rsi=s_rsi, start_dt=start_dt, end_dt=end_dt)
